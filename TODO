@@ -1,0 +1,4 @@
+TODO:
+Fix Rakefile with your name and contact info
+Add your code to lib/mint_store.rb
+Add your Merb rake tasks to lib/mint_store/merbtasks.rb
