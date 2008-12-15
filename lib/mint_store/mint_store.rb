@@ -3,9 +3,9 @@ module Merb::Cache
     attr_accessor :options
     
     def initialize(config = {})
-      @options = { :mint_delay => 30, :expire_in => 300}
-      @options.merge!(config.only(:mint_delay, :expire_in, :force_delete))
-      config.extract!(:mint_delay, :expire_in, :force_delete)
+      @options = {:refresh_delay => 30, :mint_delay => 30, :expire_in => 300}
+      @options.merge!(config.only(:refresh_delay, :mint_delay, :expire_in, :force_delete))
+      config.extract!(:refresh_delay, :mint_delay, :expire_in, :force_delete)
       super(config)
     end
     
@@ -59,7 +59,7 @@ module Merb::Cache
       
       data, refresh_time, refreshed = *packed_data
       if !refreshed && (Time.now > refresh_time)
-        write(key, data, parameters, :expire_in => 0, :refreshed => true)
+        write(key, data, parameters, conditions.merge(:expire_in => 0, :refreshed => true))
         Merb.run_later do
           (store_writable?(key, parameters, conditions) && @stores.capture_first {|c| c.write(key, insert_metadata.call, parameters, conditions)})
         end
@@ -96,9 +96,14 @@ module Merb::Cache
  protected
 
     def get_metadata_and_normalize!(conditions = {})
-      expire_in = conditions.delete(:expire_in) || options[:expire_in]
-      refreshed = conditions.delete(:refreshed)
-      conditions[:expire_in] = expire_in + (conditions.delete(:mint_delay) || options[:mint_delay])
+      refresh_delay, mint_delay, expire_in, refreshed = conditions.extract!(:refresh_delay, :mint_delay, :expire_in, :refreshed)
+      expire_in ||= options[:expire_in]
+      
+      if refreshed
+        conditions[:expire_in] = expire_in + (refresh_delay || options[:refresh_delay])
+      else
+        conditions[:expire_in] = expire_in + (mint_delay || options[:mint_delay])
+      end
       [Time.now +  expire_in, refreshed]
     end
 

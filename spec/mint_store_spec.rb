@@ -109,9 +109,15 @@ describe Merb::Cache::MintStore do
   describe "protected methods" do
     describe "#get_metadata_and_normalize!" do
       it "should delete its options from the conditions hash" do
-        hash = {:expire_in => 20, :refreshed => true, :mint_delay => 50}
+        hash = {:expire_in => 20, :refreshed => true, :mint_delay => 50, :refresh_delay => 30}
         @store.send(:get_metadata_and_normalize!, hash)
-        hash.should == {:expire_in => 70}
+        hash.should == {:expire_in => 50}
+      end
+      
+      it "should use add :mint_delay to :expire_in when :refreshed is not true" do
+        hash = {:expire_in => 20, :mint_delay => 50, :refresh_delay => 30}
+        @store.send(:get_metadata_and_normalize!, hash)
+        hash.should == {:expire_in => 70}        
       end
       
       it "should use the defaults set at store creation" do
