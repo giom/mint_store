@@ -4,15 +4,17 @@ module Merb::Cache
     
     def initialize(config = {})
       @options = {:refresh_delay => 30, :mint_delay => 30, :expire_in => 300}
-      @options.merge!(config.only(:refresh_delay, :mint_delay, :expire_in, :force_delete))
-      config.extract!(:refresh_delay, :mint_delay, :expire_in, :force_delete)
+      @options.merge!(config.only(:refresh_delay, :mint_delay, :expire_in, :force_delete, :need_expire_in))
+      config.extract!(:refresh_delay, :mint_delay, :expire_in, :force_delete, :need_expire_in)
       super(config)
     end
     
     def writable?(key, parameters = {}, conditions = {})
+      return false if options[:need_expire_in] && !conditions.has_key?(:expire_in)
+      
       conditions = conditions.dup
       get_metadata_and_normalize!(conditions)
-      store_writable?(key, parameters, conditions)
+      @stores.any? {|c| c.writable?(key, parameters, conditions)}
     end
 
     def read(key, parameters = {})
@@ -28,17 +30,15 @@ module Merb::Cache
     end
 
     def write(key, data = nil, parameters = {}, conditions = {})
-      metadata = get_metadata_and_normalize!(conditions)
-      
-      if store_writable?(key, parameters, conditions)
-        store_write(key, metadata.unshift(data), parameters, conditions)
+      if writable?(key, parameters, conditions)
+        metadata = get_metadata_and_normalize!(conditions)
+        @stores.capture_first {|c| c.write(key, metadata.unshift(data), parameters, conditions)}
       end
     end
 
-    def write_all(key, data = nil, parameters = {}, conditions = {})
-      metadata = get_metadata_and_normalize!(conditions)
-      
-      if store_writable?(key, parameters, conditions)
+    def write_all(key, data = nil, parameters = {}, conditions = {})      
+      if writable?(key, parameters, conditions)
+        metadata = get_metadata_and_normalize!(conditions)
         @stores.map {|c| c.write_all(key, metadata.unshift(data), parameters, conditions)}.all?
       end
     end
@@ -46,6 +46,8 @@ module Merb::Cache
 
     # This fetch is a bit different in that it returns directly the stale copy of the cache and the after the request is served, it updates the cache
     def fetch(key, parameters = {}, conditions = {}, &blk)
+      return false unless writable?(key, parameters, conditions)
+      
       packed_data = store_read(key, parameters)
       metadata = get_metadata_and_normalize!(conditions)
       
@@ -54,14 +56,14 @@ module Merb::Cache
       end
       
       unless packed_data
-        return (store_writable?(key, parameters, conditions) && (@stores.capture_first {|c| c.fetch(key, parameters, conditions, &insert_metadata)})[0])
+        return (@stores.capture_first {|c| c.fetch(key, parameters, conditions, &insert_metadata)})[0]
       end
       
       data, refresh_time, refreshed = *packed_data
       if !refreshed && (Time.now > refresh_time)
         write(key, data, parameters, conditions.merge(:expire_in => 0, :refreshed => true))
         Merb.run_later do
-          (store_writable?(key, parameters, conditions) && @stores.capture_first {|c| c.write(key, insert_metadata.call, parameters, conditions)})
+          @stores.capture_first {|c| c.write(key, insert_metadata.call, parameters, conditions)}
         end
       end
       data
@@ -73,16 +75,16 @@ module Merb::Cache
 
     # We do not delete the cache, we just make it stale so that it will be repopulated the next time fetch is called
     # I'm not completely sure this is a good idea though... in particular it's not going to play well with write_all
+    # Anyhow if MintStore is inialized with :force_delete => true it behaves normally
     def delete(key, parameters = {})
       return delete!(key,parameters) if options[:force_delete]
+      return false unless writable?(key, parameters, :expire_in => 0)
+      
       packed_data = store_read(key, parameters)
-      return nil unless packed_data
-      
+      return nil unless packed_data      
       data = packed_data[0]
-      
-      if store_writable?(key, parameters, :expire_in => @default_mint_delay)
-        store_write(key, [data, Time.now, false], parameters, :expire_in => @default_mint_delay)
-      end
+
+      write(key, data, parameters, :expire_in => 0)
     end
 
     def delete!(key, parameters = {})
@@ -109,14 +111,6 @@ module Merb::Cache
 
     def store_read(key, parameters = {})
       @stores.capture_first {|c| c.read(key, parameters)}
-    end
-    
-    def store_write(key, data = nil, parameters = {}, conditions = {})
-      @stores.capture_first {|c| c.write(key, data, parameters, conditions)}
-    end
-    
-    def store_writable?(key, parameters = {}, conditions = {})
-      @stores.any? {|c| c.writable?(key, parameters, conditions)}
     end
   end
 end

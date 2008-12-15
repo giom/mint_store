@@ -39,7 +39,7 @@ describe Merb::Cache::MintStore do
     end
   
     it "when the cache become stale, should return nil and reset the cache refreshed to true" do
-      @store.should_receive(:get_metadata_and_normalize!).with(:expire_in => 0, :refreshed => true).and_return([:refresh_time, :refreshed])
+      @store.should_receive(:get_metadata_and_normalize!).twice.with(:expire_in => 0, :refreshed => true).and_return([:refresh_time, :refreshed])
       @dummy.should_receive(:read).with(:key, {}).and_return [:data, Time.now, false]
       @dummy.should_receive(:write).with(:key, [:data, :refresh_time, :refreshed], {}, {:refreshed=>true, :expire_in=>0}).and_return true
       @store.read(:key).should == nil
@@ -55,7 +55,7 @@ describe Merb::Cache::MintStore do
   describe "#write" do
     it "should add the [refresh_time, refreshed] metadata to the data" do
       current_time = Time.now
-      Time.should_receive(:now).and_return(current_time)
+      Time.should_receive(:now).twice.and_return(current_time)
 
      @dummy.should_receive(:write).with(:key, ['body', current_time + @store.options[:expire_in], nil], {}, {:expire_in =>  @store.options[:expire_in] + @store.options[:mint_delay]}).and_return true
     
@@ -83,8 +83,8 @@ describe Merb::Cache::MintStore do
     it "should return the stale data and repopulate the cache after the request" do
       blk = Proc.new {:new_data}
       @dummy.should_receive(:read).and_return [:data, Time.now, nil]
-      @store.should_receive(:get_metadata_and_normalize!).with({}).and_return([:refresh_time, nil])
-      @store.should_receive(:get_metadata_and_normalize!).with({:expire_in => 0, :refreshed => true}).and_return([:refresh_time, true])
+      @store.should_receive(:get_metadata_and_normalize!).twice.with({}).and_return([:refresh_time, nil])
+      @store.should_receive(:get_metadata_and_normalize!).twice.with({:expire_in => 0, :refreshed => true}).and_return([:refresh_time, true])
       @store.fetch(:key,{}, {}, &blk).should == :data
       @dummy.should_receive(:write).with(:key, [:new_data, :refresh_time, nil], {}, {})
       Merb.to_run.first.call
@@ -94,6 +94,7 @@ describe Merb::Cache::MintStore do
   describe "#delete" do
     it "should make the cache stale by default" do
       @store.write(:key, 'body', {:bar => :baz})
+      puts @dummy.data(:key, :bar => :baz).inspect
       @dummy.data(:key, :bar => :baz)[1].should > Time.now
       @store.delete(:key, {:bar => :baz})
       @dummy.vault[:key][1][0][1].should < Time.now
